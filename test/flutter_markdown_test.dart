@@ -18,33 +18,33 @@ void main() {
       .merge(new TextTheme(body1: new TextStyle(fontSize: 12.0)));
 
   testWidgets('Simple string', (WidgetTester tester) async {
-    await tester.pumpWidget(_boilerplate(const MarkdownBody(data: 'Hello')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: 'Hello')));
 
     final Iterable<Widget> widgets = tester.allWidgets;
     _expectWidgetTypes(
-        widgets, <Type>[Directionality, MarkdownBody, Column, Wrap, RichText]);
+        widgets, <Type>[Directionality, Markdown, Column, Wrap, RichText]);
     _expectTextStrings(widgets, <String>['Hello']);
   });
 
   testWidgets('Header', (WidgetTester tester) async {
-    await tester.pumpWidget(_boilerplate(const MarkdownBody(data: '# Header')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: '# Header')));
 
     final Iterable<Widget> widgets = tester.allWidgets;
     _expectWidgetTypes(
-        widgets, <Type>[Directionality, MarkdownBody, Column, Wrap, RichText]);
+        widgets, <Type>[Directionality, Markdown, Column, Wrap, RichText]);
     _expectTextStrings(widgets, <String>['Header']);
   });
 
   testWidgets('Empty string', (WidgetTester tester) async {
-    await tester.pumpWidget(_boilerplate(const MarkdownBody(data: '')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: '')));
 
     final Iterable<Widget> widgets = tester.allWidgets;
-    _expectWidgetTypes(widgets, <Type>[Directionality, MarkdownBody, Column]);
+    _expectWidgetTypes(widgets, <Type>[Directionality, Markdown, Column]);
   });
 
   testWidgets('Ordered list', (WidgetTester tester) async {
     await tester.pumpWidget(_boilerplate(
-      const MarkdownBody(data: '1. Item 1\n1. Item 2\n2. Item 3'),
+      Markdown.parse(data: '1. Item 1\n1. Item 2\n2. Item 3'),
     ));
 
     final Iterable<Widget> widgets = tester.allWidgets;
@@ -60,7 +60,7 @@ void main() {
 
   testWidgets('Unordered list', (WidgetTester tester) async {
     await tester.pumpWidget(
-      _boilerplate(const MarkdownBody(data: '- Item 1\n- Item 2\n- Item 3')),
+      _boilerplate(Markdown.parse(data: '- Item 1\n- Item 2\n- Item 3')),
     );
 
     final Iterable<Widget> widgets = tester.allWidgets;
@@ -75,15 +75,15 @@ void main() {
   });
 
   testWidgets('Horizontal Rule', (WidgetTester tester) async {
-    await tester.pumpWidget(_boilerplate(const MarkdownBody(data: '-----')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: '-----')));
 
     final Iterable<Widget> widgets = tester.allWidgets;
     _expectWidgetTypes(
-        widgets, <Type>[Directionality, MarkdownBody, DecoratedBox, SizedBox]);
+        widgets, <Type>[Directionality, Markdown, DecoratedBox, SizedBox]);
   });
 
   testWidgets('Scrollable wrapping', (WidgetTester tester) async {
-    await tester.pumpWidget(_boilerplate(const Markdown(data: '')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: '', scrollable: true)));
 
     final List<Widget> widgets = tester.allWidgets.toList();
     _expectWidgetTypes(widgets.take(3), <Type>[
@@ -100,9 +100,10 @@ void main() {
   group('Links', () {
     testWidgets('should be tappable', (WidgetTester tester) async {
       String tapResult;
-      await tester.pumpWidget(_boilerplate(new Markdown(
+      await tester.pumpWidget(_boilerplate(new Markdown.parse(
         data: '[Link Text](href)',
         onTapLink: (value) => tapResult = value,
+        scrollable: true,
       )));
 
       final RichText textWidget =
@@ -118,9 +119,10 @@ void main() {
 
     testWidgets('should work with nested elements', (WidgetTester tester) async {
       final List<String> tapResults = <String>[];
-      await tester.pumpWidget(_boilerplate(new Markdown(
+      await tester.pumpWidget(_boilerplate(new Markdown.parse(
         data: '[Link `with nested code` Text](href)',
         onTapLink: (value) => tapResults.add(value),
+        scrollable: true,
       )));
 
       final RichText textWidget =
@@ -145,9 +147,10 @@ void main() {
     testWidgets('should work next to other links', (WidgetTester tester) async {
       final List<String> tapResults = <String>[];
 
-      await tester.pumpWidget(_boilerplate(new Markdown(
+      await tester.pumpWidget(_boilerplate(new Markdown.parse(
           data: '[First Link](firstHref) and [Second Link](secondHref)',
           onTapLink: (value) => tapResults.add(value),
+          scrollable: true,
       )));
 
       final RichText textWidget =
@@ -177,8 +180,9 @@ void main() {
     });
 
     testWidgets('should not interrupt styling', (WidgetTester tester) async {
-      await tester.pumpWidget(_boilerplate(const Markdown(
+      await tester.pumpWidget(_boilerplate(Markdown.parse(
         data:'_textbefore ![alt](http://img) textafter_',
+        scrollable: true,
       )));
 
       final RichText firstTextWidget =
@@ -198,7 +202,7 @@ void main() {
 
     testWidgets('should work with a link', (WidgetTester tester) async {
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: '![alt](https://img#50x50)')));
+          .pumpWidget(_boilerplate(Markdown.parse(data: '![alt](https://img#50x50)', scrollable: true)));
 
       final Image image =
         tester.allWidgets.firstWhere((Widget widget) => widget is Image);
@@ -210,7 +214,7 @@ void main() {
 
     testWidgets('local files should be files', (WidgetTester tester) async {
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: '![alt](http.png)')));
+          .pumpWidget(_boilerplate(Markdown.parse(data: '![alt](http.png)', scrollable: true)));
 
       final Image image =
         tester.allWidgets.firstWhere((Widget widget) => widget is Image);
@@ -219,7 +223,7 @@ void main() {
 
     testWidgets('should work with resources', (WidgetTester tester) async {
       await tester.pumpWidget(_boilerplate(
-          const Markdown(data: '![alt](resource:assets/logo.png)')));
+          Markdown.parse(data: '![alt](resource:assets/logo.png)', scrollable: true)));
 
       final Image image =
         tester.allWidgets.firstWhere((Widget widget) => widget is Image);
@@ -229,7 +233,7 @@ void main() {
 
     testWidgets('should work with local image files', (WidgetTester tester) async {
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: '![alt](img.png#50x50)')));
+          .pumpWidget(_boilerplate(Markdown.parse(data: '![alt](img.png#50x50)', scrollable: true)));
 
       final Image image =
         tester.allWidgets.firstWhere((Widget widget) => widget is Image);
@@ -241,7 +245,7 @@ void main() {
 
     testWidgets('should show properly next to text', (WidgetTester tester) async {
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: 'Hello ![alt](img#50x50)')));
+          .pumpWidget(_boilerplate(Markdown.parse(data: 'Hello ![alt](img#50x50)', scrollable: true)));
 
       final RichText richText =
         tester.allWidgets.firstWhere((Widget widget) => widget is RichText);
@@ -252,9 +256,10 @@ void main() {
 
     testWidgets('should work when nested in a link', (WidgetTester tester) async {
       final List<String> tapResults = <String>[];
-      await tester.pumpWidget(_boilerplate(new Markdown(
+      await tester.pumpWidget(_boilerplate(new Markdown.parse(
         data: '[![alt](https://img#50x50)](href)',
         onTapLink: (value) => tapResults.add(value),
+        scrollable: true,
       )));
 
       final GestureDetector detector =
@@ -268,9 +273,10 @@ void main() {
 
     testWidgets('should work when nested in a link with text', (WidgetTester tester) async {
       final List<String> tapResults = <String>[];
-      await tester.pumpWidget(_boilerplate(new Markdown(
+      await tester.pumpWidget(_boilerplate(new Markdown.parse(
         data: '[Text before ![alt](https://img#50x50) text after](href)',
         onTapLink: (value) => tapResults.add(value),
+        scrollable: true,
       )));
 
       final GestureDetector detector =
@@ -301,9 +307,10 @@ void main() {
 
     testWidgets('should work alongside different links', (WidgetTester tester) async {
       final List<String> tapResults = <String>[];
-      await tester.pumpWidget(_boilerplate(new Markdown(
+      await tester.pumpWidget(_boilerplate(new Markdown.parse(
         data: '[Link before](firstHref)[![alt](https://img#50x50)](imageHref)[link after](secondHref)',
         onTapLink: (value) => tapResults.add(value),
+        scrollable: true,
       )));
 
       final RichText firstTextWidget =
@@ -337,7 +344,7 @@ void main() {
     testWidgets('should work with image in uri data scheme', (WidgetTester tester) async {
       const String imageData = '![alt](data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=)';
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: imageData)));
+          .pumpWidget(_boilerplate(Markdown.parse(data: imageData, scrollable: true)));
 
       final Image image =
       tester.allWidgets.firstWhere((Widget widget) => widget is Image);
@@ -347,7 +354,7 @@ void main() {
     testWidgets('should work with base64 text in uri data scheme', (WidgetTester tester) async {
       const String imageData = '![alt](data:text/plan;base64,Rmx1dHRlcg==)';
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: imageData)));
+          .pumpWidget(_boilerplate(Markdown.parse(data: imageData, scrollable: true)));
 
       final Text widget =
       tester.allWidgets.firstWhere((Widget widget) => widget is Text);
@@ -358,7 +365,7 @@ void main() {
     testWidgets('should work with text in uri data scheme', (WidgetTester tester) async {
       const String imageData = '![alt](data:text/plan,Hello%2C%20Flutter)';
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: imageData)));
+          .pumpWidget(_boilerplate(Markdown.parse(data: imageData, scrollable: true)));
 
       final Text widget =
       tester.allWidgets.firstWhere((Widget widget) => widget is Text);
@@ -369,7 +376,7 @@ void main() {
     testWidgets('should work with empty uri data scheme', (WidgetTester tester) async {
       const String imageData = '![alt](data:,)';
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: imageData)));
+          .pumpWidget(_boilerplate(Markdown.parse(data: imageData, scrollable: true)));
 
       final Text widget =
       tester.allWidgets.firstWhere((Widget widget) => widget is Text);
@@ -380,7 +387,7 @@ void main() {
     testWidgets('should work with unsupported mime types of uri data scheme', (WidgetTester tester) async {
       const String imageData = '![alt](data:application/javascript,var%20test=1)';
       await tester
-          .pumpWidget(_boilerplate(const Markdown(data: imageData)));
+          .pumpWidget(_boilerplate(Markdown.parse(data: imageData, scrollable: true)));
 
       final SizedBox widget =
       tester.allWidgets.firstWhere((Widget widget) => widget is SizedBox);
@@ -395,7 +402,7 @@ void main() {
     ];
 
     for (String mdLine in mdData) {
-      await tester.pumpWidget(_boilerplate(new MarkdownBody(data: mdLine)));
+      await tester.pumpWidget(_boilerplate(Markdown.parse(data: mdLine)));
 
       final Iterable<Widget> widgets = tester.allWidgets;
       _expectTextStrings(widgets, <String>['Line 1', 'Line 2']);
@@ -404,31 +411,31 @@ void main() {
 
   group('Parser does not convert', () {
     testWidgets('& to &amp; when parsing', (WidgetTester tester) async {
-      await tester.pumpWidget(_boilerplate(const Markdown(data: '&')));
+      await tester.pumpWidget(_boilerplate(Markdown.parse(data: '&', scrollable: true)));
       _expectTextStrings(tester.allWidgets, <String>['&']);
     });
 
     testWidgets('< to &lt; when parsing', (WidgetTester tester) async {
-      await tester.pumpWidget(_boilerplate(const Markdown(data: '<')));
+      await tester.pumpWidget(_boilerplate(Markdown.parse(data: '<', scrollable: true)));
       _expectTextStrings(tester.allWidgets, <String>['<']);
     });
 
     testWidgets('existing HTML entities when parsing', (WidgetTester tester) async {
-      await tester.pumpWidget(_boilerplate(const Markdown(data: '&amp; &copy; &#60; &#x0007B;')));
+      await tester.pumpWidget(_boilerplate(Markdown.parse(data: '&amp; &copy; &#60; &#x0007B;', scrollable: true)));
       _expectTextStrings(tester.allWidgets, <String>['&amp; &copy; &#60; &#x0007B;']);
     });
   });
 
   testWidgets('Changing config - data', (WidgetTester tester) async {
-    await tester.pumpWidget(_boilerplate(const Markdown(data: 'Data1')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: 'Data1', scrollable: true)));
     _expectTextStrings(tester.allWidgets, <String>['Data1']);
 
     final String stateBefore = _dumpRenderView();
-    await tester.pumpWidget(_boilerplate(const Markdown(data: 'Data1')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: 'Data1', scrollable: true)));
     final String stateAfter = _dumpRenderView();
     expect(stateBefore, equals(stateAfter));
 
-    await tester.pumpWidget(_boilerplate(const Markdown(data: 'Data2')));
+    await tester.pumpWidget(_boilerplate(Markdown.parse(data: 'Data2', scrollable: true)));
     _expectTextStrings(tester.allWidgets, <String>['Data2']);
   });
 
@@ -441,11 +448,11 @@ void main() {
     expect(style1, isNot(style2));
 
     await tester.pumpWidget(
-      _boilerplate(new Markdown(data: '# Test', styleSheet: style1)),
+      _boilerplate(new Markdown.parse(data: '# Test', styleSheet: style1, scrollable: true)),
     );
     final RichText text1 = tester.widget(find.byType(RichText));
     await tester.pumpWidget(
-      _boilerplate(new Markdown(data: '# Test', styleSheet: style2)),
+      _boilerplate(new Markdown.parse(data: '# Test', styleSheet: style2, scrollable: true)),
     );
     final RichText text2 = tester.widget(find.byType(RichText));
 

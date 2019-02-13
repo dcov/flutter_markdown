@@ -12,14 +12,14 @@ import 'package:meta/meta.dart';
 import 'builder.dart';
 import 'style_sheet.dart';
 
-/// Signature for callbacks used by [MarkdownWidget] when the user taps a link.
+/// Signature for callbacks used by [Markdown] when the user taps a link.
 ///
-/// Used by [MarkdownWidget.onTapLink].
+/// Used by [Markdown.onTapLink].
 typedef void MarkdownTapLinkCallback(String href);
 
 /// Creates a format [TextSpan] given a string.
 ///
-/// Used by [MarkdownWidget] to highlight the contents of `pre` elements.
+/// Used by [Markdown] to highlight the contents of `pre` elements.
 abstract class SyntaxHighlighter { // ignore: one_member_abstracts
   /// Returns the formated [TextSpan] for the given string.
   TextSpan format(String source);
@@ -35,22 +35,49 @@ abstract class SyntaxHighlighter { // ignore: one_member_abstracts
 ///  * [Markdown], which is a scrolling container of Markdown.
 ///  * [MarkdownBody], which is a non-scrolling container of Markdown.
 ///  * <https://daringfireball.net/projects/markdown/>
-abstract class MarkdownWidget extends StatefulWidget {
+class Markdown extends StatefulWidget {
+
+  factory Markdown.parse({
+    Key key,
+    @required String data,
+    MarkdownStyleSheet styleSheet,
+    SyntaxHighlighter syntaxHighlighter,
+    MarkdownTapLinkCallback onTapLink,
+    Directory imageDirectory,
+    bool scrollable = false,
+    EdgeInsets scrollablePadding = const EdgeInsets.all(16.0)
+  }) {
+    final List<String> lines = data.replaceAll('\r\n', '\n').split('\n');
+    final md.Document document = new md.Document(encodeHtml: false);
+    return Markdown(
+      key: key,
+      nodes: document.parseLines(lines),
+      styleSheet: styleSheet,
+      syntaxHighlighter: syntaxHighlighter,
+      onTapLink: onTapLink,
+      imageDirectory: imageDirectory,
+      scrollable: scrollable,
+      scrollablePadding: scrollablePadding,
+    );
+  }
+
   /// Creates a widget that parses and displays Markdown.
   ///
   /// The [data] argument must not be null.
-  const MarkdownWidget({
+  const Markdown({
     Key key,
-    @required this.data,
+    @required this.nodes,
     this.styleSheet,
     this.syntaxHighlighter,
     this.onTapLink,
     this.imageDirectory,
-  }) : assert(data != null),
+    this.scrollable = false,
+    this.scrollablePadding = const EdgeInsets.all(16.0)
+  }) : assert(nodes != null),
+       assert(scrollable != null),
        super(key: key);
 
-  /// The Markdown to display.
-  final String data;
+  final List<md.Node> nodes;
 
   /// The styles to use when displaying the Markdown.
   ///
@@ -68,16 +95,15 @@ abstract class MarkdownWidget extends StatefulWidget {
   /// The base directory holding images referenced by Img tags with local file paths.
   final Directory imageDirectory;
 
-  /// Subclasses should override this function to display the given children,
-  /// which are the parsed representation of [data].
-  @protected
-  Widget build(BuildContext context, List<Widget> children);
+  final bool scrollable;
+
+  final EdgeInsets scrollablePadding;
 
   @override
-  _MarkdownWidgetState createState() => new _MarkdownWidgetState();
+  _MarkdownState createState() => new _MarkdownState();
 }
 
-class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuilderDelegate {
+class _MarkdownState extends State<Markdown> implements MarkdownBuilderDelegate {
   List<Widget> _children;
   final List<GestureRecognizer> _recognizers = <GestureRecognizer>[];
 
@@ -88,9 +114,9 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
   }
 
   @override
-  void didUpdateWidget(MarkdownWidget oldWidget) {
+  void didUpdateWidget(Markdown oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.data != oldWidget.data
+    if (widget.nodes != oldWidget.nodes
         || widget.styleSheet != oldWidget.styleSheet)
       _parseMarkdown();
   }
@@ -102,19 +128,14 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
   }
 
   void _parseMarkdown() {
-    final MarkdownStyleSheet styleSheet = widget.styleSheet ?? new MarkdownStyleSheet.fromTheme(Theme.of(context));
-
     _disposeRecognizers();
-
-    // TODO: This can be optimized by doing the split and removing \r at the same time
-    final List<String> lines = widget.data.replaceAll('\r\n', '\n').split('\n');
-    final md.Document document = new md.Document(encodeHtml: false);
+    final MarkdownStyleSheet styleSheet = widget.styleSheet ?? new MarkdownStyleSheet.fromTheme(Theme.of(context));
     final MarkdownBuilder builder = new MarkdownBuilder(
       delegate: this,
       styleSheet: styleSheet,
       imageDirectory: widget.imageDirectory,
     );
-    _children = builder.build(document.parseLines(lines));
+    _children = builder.build(widget.nodes);
   }
 
   void _disposeRecognizers() {
@@ -145,80 +166,21 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
   }
 
   @override
-  Widget build(BuildContext context) => widget.build(context, _children);
-}
+  Widget build(BuildContext context) {
 
-/// A non-scrolling widget that parses and displays Markdown.
-///
-/// Supports all standard Markdown from the original
-/// [Markdown specification](https://daringfireball.net/projects/markdown/).
-///
-/// See also:
-///
-///  * [Markdown], which is a scrolling container of Markdown.
-///  * <https://daringfireball.net/projects/markdown/>
-class MarkdownBody extends MarkdownWidget {
-  /// Creates a non-scrolling widget that parses and displays Markdown.
-  const MarkdownBody({
-    Key key,
-    String data,
-    MarkdownStyleSheet styleSheet,
-    SyntaxHighlighter syntaxHighlighter,
-    MarkdownTapLinkCallback onTapLink,
-    Directory imageDirectory,
-  }) : super(
-    key: key,
-    data: data,
-    styleSheet: styleSheet,
-    syntaxHighlighter: syntaxHighlighter,
-    onTapLink: onTapLink,
-    imageDirectory: imageDirectory,
-  );
+    if (widget.scrollable) {
+      return ListView(
+        padding: widget.scrollablePadding,
+        children: _children,
+      );
+    }
 
-  @override
-  Widget build(BuildContext context, List<Widget> children) {
-    if (children.length == 1)
-      return children.single;
-    return new Column(
+    if (_children.length == 1)
+      return _children.single;
+    
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
+      children: _children,
     );
-  }
-}
-
-/// A scrolling widget that parses and displays Markdown.
-///
-/// Supports all standard Markdown from the original
-/// [Markdown specification](https://daringfireball.net/projects/markdown/).
-///
-/// See also:
-///
-///  * [MarkdownBody], which is a non-scrolling container of Markdown.
-///  * <https://daringfireball.net/projects/markdown/>
-class Markdown extends MarkdownWidget {
-  /// Creates a scrolling widget that parses and displays Markdown.
-  const Markdown({
-    Key key,
-    String data,
-    MarkdownStyleSheet styleSheet,
-    SyntaxHighlighter syntaxHighlighter,
-    MarkdownTapLinkCallback onTapLink,
-    Directory imageDirectory,
-    this.padding: const EdgeInsets.all(16.0),
-  }) : super(
-    key: key,
-    data: data,
-    styleSheet: styleSheet,
-    syntaxHighlighter: syntaxHighlighter,
-    onTapLink: onTapLink,
-    imageDirectory: imageDirectory,
-  );
-
-  /// The amount of space by which to inset the children.
-  final EdgeInsets padding;
-
-  @override
-  Widget build(BuildContext context, List<Widget> children) {
-    return new ListView(padding: padding, children: children);
   }
 }
