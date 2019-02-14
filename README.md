@@ -12,12 +12,12 @@ html.
 Using the Markdown widget is simple, just pass in the source markdown as a
 string:
 
-    new Markdown(data: markdownSource);
+    new Markdown.parse(data: markdownSource, scrollable: true);
 
 If you do not want the padding or scrolling behavior, use the MarkdownBody
 instead:
 
-    new MarkdownBody(data: markdownSource);
+    new Markdown.parse(data: markdownSource, scrollable: false); // Default
 
 By default, Markdown uses the formatting from the current material design theme,
 but it's possible to create your own custom styling. Use the MarkdownStyle class
