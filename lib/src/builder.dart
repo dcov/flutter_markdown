@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:io';
-
 import 'package:flutter/gestures.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:markdown/markdown.dart' as md;
-import 'package:path/path.dart' as p;
 
+import '_functions_io.dart' if (dart.library.html) '_functions_web.dart';
 import 'style_sheet.dart';
+import 'widget.dart';
 
-final Set<String> _kBlockTags = new Set<String>.from(<String>[
+const List<String> _kBlockTags = const <String>[
   'p',
   'h1',
   'h2',
@@ -25,11 +24,16 @@ final Set<String> _kBlockTags = new Set<String>.from(<String>[
   'ol',
   'ul',
   'hr',
-]);
+  'table',
+  'thead',
+  'tbody',
+  'tr'
+];
 
 const List<String> _kListTags = const <String>['ul', 'ol'];
 
 bool _isBlockTag(String tag) => _kBlockTags.contains(tag);
+
 bool _isListTag(String tag) => _kListTags.contains(tag);
 
 class _BlockElement {
@@ -41,20 +45,24 @@ class _BlockElement {
   int nextListIndex = 0;
 }
 
+class _TableElement {
+  final List<TableRow> rows = <TableRow>[];
+}
+
 /// A collection of widgets that should be placed adjacent to (inline with)
 /// other inline elements in the same parent block.
-/// 
-/// Inline elements can be textual (a/em/strong) represented by [RichText] 
+///
+/// Inline elements can be textual (a/em/strong) represented by [RichText]
 /// widgets or images (img) represented by [Image.network] widgets.
-/// 
+///
 /// Inline elements can be nested within other inline elements, inheriting their
 /// parent's style along with the style of the block they are in.
-/// 
-/// When laying out inline widgets, first, any adjacent RichText widgets are 
+///
+/// When laying out inline widgets, first, any adjacent RichText widgets are
 /// merged, then, all inline widgets are enclosed in a parent [Wrap] widget.
 class _InlineElement {
   _InlineElement(this.tag, {this.style});
- 
+
   final String tag;
 
   /// Created by merging the style defined for this element's [tag] in the
@@ -84,22 +92,57 @@ abstract class MarkdownBuilderDelegate {
 ///  * [Markdown], which is a widget that parses and displays Markdown.
 class MarkdownBuilder implements md.NodeVisitor {
   /// Creates an object that builds a [Widget] tree from parsed Markdown.
-  MarkdownBuilder({ this.delegate, this.styleSheet, this.imageDirectory });
+  MarkdownBuilder({
+    @required this.delegate,
+    @required this.selectable,
+    @required this.styleSheet,
+    @required this.imageDirectory,
+    @required this.imageBuilder,
+    @required this.checkboxBuilder,
+    @required this.builders,
+    this.fitContent = false,
+  });
 
   /// A delegate that controls how link and `pre` elements behave.
   final MarkdownBuilderDelegate delegate;
 
+  /// If true, the text is selectable.
+  ///
+  /// Defaults to false.
+  final bool selectable;
+
   /// Defines which [TextStyle] objects to use for each type of element.
   final MarkdownStyleSheet styleSheet;
 
-  /// The base directory holding images referenced by Img tags with local file paths.
-  final Directory imageDirectory;
+  /// The base directory holding images referenced by Img tags with local or network file paths.
+  final String imageDirectory;
+
+  /// Call when build an image widget.
+  final MarkdownImageBuilder imageBuilder;
+
+  /// Call when build a checkbox widget.
+  final MarkdownCheckboxBuilder checkboxBuilder;
+
+  /// Call when build a custom widget.
+  final Map<String, MarkdownElementBuilder> builders;
+
+  /// Whether to allow the widget to fit the child content.
+  final bool fitContent;
 
   final List<String> _listIndents = <String>[];
   final List<_BlockElement> _blocks = <_BlockElement>[];
+  final List<_TableElement> _tables = <_TableElement>[];
   final List<_InlineElement> _inlines = <_InlineElement>[];
   final List<GestureRecognizer> _linkHandlers = <GestureRecognizer>[];
+  String _currentBlockTag;
+  bool _isInBlockquote = false;
+  final List<String> _tags = <String>[];
 
+  /// The soft line break pattern is use to identify the spaces at the end of a
+  /// line of text and the leading spaces in the immediately following the line
+  /// of text. These spaces are removed in accordance with the Markdown
+  /// specification on soft line breaks when lines of text are joined.
+  final RegExp _softLineBreakPattern = RegExp(r" ?\n *");
 
   /// Returns widgets that display the given Markdown nodes.
   ///
@@ -107,51 +150,63 @@ class MarkdownBuilder implements md.NodeVisitor {
   List<Widget> build(List<md.Node> nodes) {
     _listIndents.clear();
     _blocks.clear();
+    _tables.clear();
     _inlines.clear();
     _linkHandlers.clear();
+    _isInBlockquote = false;
+    _tags.clear();
 
-    _blocks.add(new _BlockElement(null));
+    _blocks.add(_BlockElement(null));
 
     for (md.Node node in nodes) {
       assert(_blocks.length == 1);
       node.accept(this);
     }
 
+    assert(_tables.isEmpty);
     assert(_inlines.isEmpty);
+    assert(!_isInBlockquote);
+    assert(_tags.isEmpty);
     return _blocks.single.children;
-  }
-
-  @override
-  void visitText(md.Text text) {
-    if (_blocks.last.tag == null) // Don't allow text directly under the root.
-      return;
-
-    _addParentInlineIfNeeded(_blocks.last.tag);
-
-    final TextSpan span = _blocks.last.tag == 'pre'
-      ? delegate.formatText(styleSheet, text.text)
-      : new TextSpan(
-          style: _inlines.last.style,
-          text: text.text,
-          recognizer: _linkHandlers.isNotEmpty ? _linkHandlers.last : null,
-        );
-
-    _inlines.last.children.add(new RichText(text: span));
   }
 
   @override
   bool visitElementBefore(md.Element element) {
     final String tag = element.tag;
+    if (_currentBlockTag == null) _currentBlockTag = tag;
+
+    if (builders.containsKey(tag)) {
+      builders[tag].visitElementBefore(element);
+    }
+
+    var start;
     if (_isBlockTag(tag)) {
-      _addAnonymousBlockIfNeeded(styleSheet.styles[tag]);
-      if (_isListTag(tag))
+      _addAnonymousBlockIfNeeded();
+      if (_isListTag(tag)) {
         _listIndents.add(tag);
-      _blocks.add(new _BlockElement(tag));
+        if (element.attributes["start"] != null)
+          start = int.parse(element.attributes["start"]) - 1;
+      } else if (tag == 'blockquote') {
+        _isInBlockquote = true;
+      } else if (tag == 'table') {
+        _tables.add(_TableElement());
+      } else if (tag == 'tr') {
+        final length = _tables.single.rows.length;
+        BoxDecoration decoration = styleSheet.tableCellsDecoration;
+        if (length == 0 || length % 2 == 1) decoration = null;
+        _tables.single.rows.add(TableRow(
+          decoration: decoration,
+          children: <Widget>[],
+        ));
+      }
+      var bElement = _BlockElement(tag);
+      if (start != null) bElement.nextListIndex = start;
+      _blocks.add(bElement);
     } else {
       _addParentInlineIfNeeded(_blocks.last.tag);
 
       TextStyle parentStyle = _inlines.last.style;
-      _inlines.add(new _InlineElement(
+      _inlines.add(_InlineElement(
         tag,
         style: parentStyle.merge(styleSheet.styles[tag]),
       ));
@@ -165,18 +220,56 @@ class MarkdownBuilder implements md.NodeVisitor {
   }
 
   @override
+  void visitText(md.Text text) {
+    // Don't allow text directly under the root.
+    if (_blocks.last.tag == null) return;
+
+    _addParentInlineIfNeeded(_blocks.last.tag);
+
+    Widget child;
+    if (_tags.isNotEmpty && builders.containsKey(_tags.last)) {
+      child =
+          builders[_tags.last].visitText(text, styleSheet.styles[_tags.last]);
+    } else if (_blocks.last.tag == 'pre') {
+      child = Scrollbar(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: styleSheet.codeblockPadding,
+          child: _buildRichText(delegate.formatText(styleSheet, text.text)),
+        ),
+      );
+    } else {
+      child = _buildRichText(
+        TextSpan(
+          style: _isInBlockquote
+              ? _inlines.last.style.merge(styleSheet.blockquote)
+              : _inlines.last.style,
+          text: _isInBlockquote
+              ? text.text
+              : text.text.replaceAll(_softLineBreakPattern, " "),
+          recognizer: _linkHandlers.isNotEmpty ? _linkHandlers.last : null,
+        ),
+        textAlign: _textAlignForBlockTag(_currentBlockTag),
+      );
+    }
+    _inlines.last.children.add(child);
+  }
+
+  @override
   void visitElementAfter(md.Element element) {
     final String tag = element.tag;
 
     if (_isBlockTag(tag)) {
-      _addAnonymousBlockIfNeeded(styleSheet.styles[tag]);
+      _addAnonymousBlockIfNeeded();
 
       final _BlockElement current = _blocks.removeLast();
       Widget child;
 
       if (current.children.isNotEmpty) {
-        child = new Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child = Column(
+          crossAxisAlignment: fitContent
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.stretch,
           children: current.children,
         );
       } else {
@@ -188,38 +281,53 @@ class MarkdownBuilder implements md.NodeVisitor {
         _listIndents.removeLast();
       } else if (tag == 'li') {
         if (_listIndents.isNotEmpty) {
-          child = new Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          if (element.children.length == 0) {
+            element.children.add(md.Text(''));
+          }
+          Widget bullet;
+          dynamic el = element.children[0];
+          if (el is md.Element && el.attributes['type'] == 'checkbox') {
+            bool val = el.attributes['checked'] != 'false';
+            bullet = _buildCheckbox(val);
+          } else {
+            bullet = _buildBullet(_listIndents.last);
+          }
+          // See #147 and #169
+          child = Row(
+            textBaseline: TextBaseline.alphabetic,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
             children: <Widget>[
-              new SizedBox(
+              SizedBox(
                 width: styleSheet.listIndent,
-                child: _buildBullet(_listIndents.last),
+                child: bullet,
               ),
-              new Expanded(child: child)
+              Expanded(child: child)
             ],
           );
         }
+      } else if (tag == 'table') {
+        child = Table(
+          defaultColumnWidth: styleSheet.tableColumnWidth,
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          border: styleSheet.tableBorder,
+          children: _tables.removeLast().rows,
+        );
       } else if (tag == 'blockquote') {
-        child = new DecoratedBox(
+        _isInBlockquote = false;
+        child = DecoratedBox(
           decoration: styleSheet.blockquoteDecoration,
-          child: new Padding(
-            padding: new EdgeInsets.all(styleSheet.blockquotePadding),
+          child: Padding(
+            padding: styleSheet.blockquotePadding,
             child: child,
           ),
         );
       } else if (tag == 'pre') {
-        child = new DecoratedBox(
+        child = DecoratedBox(
           decoration: styleSheet.codeblockDecoration,
-          child: new Padding(
-            padding: new EdgeInsets.all(styleSheet.codeblockPadding),
-            child: child,
-          ),
-        );
-      } else if (tag == 'hr') {
-        child = new DecoratedBox(
-          decoration: styleSheet.horizontalRuleDecoration,
           child: child,
         );
+      } else if (tag == 'hr') {
+        child = Container(decoration: styleSheet.horizontalRuleDecoration);
       }
 
       _addBlockChild(child);
@@ -227,9 +335,44 @@ class MarkdownBuilder implements md.NodeVisitor {
       final _InlineElement current = _inlines.removeLast();
       final _InlineElement parent = _inlines.last;
 
-      if (tag == 'img') {
+      if (builders.containsKey(tag)) {
+        final Widget child =
+            builders[tag].visitElementAfter(element, styleSheet.styles[tag]);
+        if (child != null) current.children[0] = child;
+      } else if (tag == 'img') {
         // create an image widget for this image
-        current.children.add(_buildImage(element.attributes['src']));
+        current.children.add(_buildImage(
+          element.attributes['src'],
+          element.attributes['title'],
+          element.attributes['alt'],
+        ));
+      } else if (tag == 'br') {
+        current.children.add(_buildRichText(const TextSpan(text: '\n')));
+      } else if (tag == 'th' || tag == 'td') {
+        TextAlign align;
+        String style = element.attributes['style'];
+        if (style == null) {
+          align = tag == 'th' ? styleSheet.tableHeadAlign : TextAlign.left;
+        } else {
+          RegExp regExp = RegExp(r'text-align: (left|center|right)');
+          Match match = regExp.matchAsPrefix(style);
+          switch (match[1]) {
+            case 'left':
+              align = TextAlign.left;
+              break;
+            case 'center':
+              align = TextAlign.center;
+              break;
+            case 'right':
+              align = TextAlign.right;
+              break;
+          }
+        }
+        Widget child = _buildTableCell(
+          _mergeInlineChildren(current.children, align),
+          textAlign: align,
+        );
+        _tables.single.rows.last.children.add(child);
       } else if (tag == 'a') {
         _linkHandlers.removeLast();
       }
@@ -238,12 +381,12 @@ class MarkdownBuilder implements md.NodeVisitor {
         parent.children.addAll(current.children);
       }
     }
+    if (_currentBlockTag == tag) _currentBlockTag = null;
   }
 
-  Widget _buildImage(String src) {
+  Widget _buildImage(String src, String title, String alt) {
     final List<String> parts = src.split('#');
-    if (parts.isEmpty)
-      return const SizedBox();
+    if (parts.isEmpty) return const SizedBox();
 
     final String path = parts.first;
     double width;
@@ -258,51 +401,70 @@ class MarkdownBuilder implements md.NodeVisitor {
 
     Uri uri = Uri.parse(path);
     Widget child;
-    if (uri.scheme == 'http' || uri.scheme == 'https') {
-      child = new Image.network(uri.toString(), width: width, height: height);
-    } else if (uri.scheme == 'data') {
-      child = _handleDataSchemeUri(uri, width, height);
-    } else if (uri.scheme == "resource") {
-      child = new Image.asset(path.substring(9), width: width, height: height);
+    if (imageBuilder != null) {
+      child = imageBuilder(uri, title, alt);
     } else {
-      String filePath = (imageDirectory == null
-          ? uri.toFilePath()
-          : p.join(imageDirectory.path, uri.toFilePath()));
-      child = new Image.file(new File(filePath), width: width, height: height);
+      child = kDefaultImageBuilder(uri, imageDirectory, width, height);
     }
 
     if (_linkHandlers.isNotEmpty) {
       TapGestureRecognizer recognizer = _linkHandlers.last;
-      return new GestureDetector(child: child, onTap: recognizer.onTap);
+      return GestureDetector(child: child, onTap: recognizer.onTap);
     } else {
       return child;
     }
   }
 
-  Widget _handleDataSchemeUri(Uri uri, final double width, final double height) {
-    final String mimeType = uri.data.mimeType;
-    if (mimeType.startsWith('image/')) {
-      return new Image.memory(uri.data.contentAsBytes(), width: width, height: height);
-    } else if (mimeType.startsWith('text/')) {
-      return new Text(uri.data.contentAsString());
+  Widget _buildCheckbox(bool checked) {
+    if (checkboxBuilder != null) {
+      return checkboxBuilder(checked);
     }
-    return const SizedBox();
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Icon(
+        checked ? Icons.check_box : Icons.check_box_outline_blank,
+        size: styleSheet.checkbox.fontSize,
+        color: styleSheet.checkbox.color,
+      ),
+    );
   }
 
   Widget _buildBullet(String listTag) {
-    if (listTag == 'ul')
-      return new Text('•', textAlign: TextAlign.center, style: styleSheet.styles['li']);
+    if (listTag == 'ul') {
+      return Text(
+        '•',
+        textAlign: TextAlign.center,
+        style: styleSheet.listBullet,
+      );
+    }
 
     final int index = _blocks.last.nextListIndex;
-    return new Padding(
-      padding: const EdgeInsets.only(right: 5.0),
-      child: new Text('${index + 1}.', textAlign: TextAlign.right, style: styleSheet.styles['li']),
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Text(
+        '${index + 1}.',
+        textAlign: TextAlign.right,
+        style: styleSheet.listBullet,
+      ),
+    );
+  }
+
+  Widget _buildTableCell(List<Widget> children, {TextAlign textAlign}) {
+    return TableCell(
+      child: Padding(
+        padding: styleSheet.tableCellsPadding,
+        child: DefaultTextStyle(
+          style: styleSheet.tableBody,
+          textAlign: textAlign,
+          child: Wrap(children: children),
+        ),
+      ),
     );
   }
 
   void _addParentInlineIfNeeded(String tag) {
     if (_inlines.isEmpty) {
-      _inlines.add(new _InlineElement(
+      _inlines.add(_InlineElement(
         tag,
         style: styleSheet.styles[tag],
       ));
@@ -311,42 +473,148 @@ class MarkdownBuilder implements md.NodeVisitor {
 
   void _addBlockChild(Widget child) {
     final _BlockElement parent = _blocks.last;
-    if (parent.children.isNotEmpty)
-      parent.children.add(new SizedBox(height: styleSheet.blockSpacing));
+    if (parent.children.isNotEmpty) {
+      parent.children.add(SizedBox(height: styleSheet.blockSpacing));
+    }
     parent.children.add(child);
     parent.nextListIndex += 1;
   }
 
-  void _addAnonymousBlockIfNeeded(TextStyle style) {
-    if (_inlines.isEmpty) {
-      return;
+  void _addAnonymousBlockIfNeeded() {
+    if (_inlines.isEmpty) return;
+
+    WrapAlignment blockAlignment = WrapAlignment.start;
+    TextAlign textAlign = TextAlign.start;
+    if (_isBlockTag(_currentBlockTag)) {
+      blockAlignment = _wrapAlignmentForBlockTag(_currentBlockTag);
+      textAlign = _textAlignForBlockTag(_currentBlockTag);
     }
 
     final _InlineElement inline = _inlines.single;
     if (inline.children.isNotEmpty) {
-      List<Widget> mergedInlines = _mergeInlineChildren(inline);
-      final Wrap wrap = new Wrap(children: mergedInlines);
+      List<Widget> mergedInlines = _mergeInlineChildren(
+        inline.children,
+        textAlign,
+      );
+      final Wrap wrap = Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: mergedInlines,
+        alignment: blockAlignment,
+      );
       _addBlockChild(wrap);
       _inlines.clear();
     }
   }
 
-  /// Merges adjacent [TextSpan] children of the given [_InlineElement]
-  List<Widget> _mergeInlineChildren(_InlineElement inline) {
+  /// Merges adjacent [TextSpan] children
+  List<Widget> _mergeInlineChildren(
+    List<Widget> children,
+    TextAlign textAlign,
+  ) {
     List<Widget> mergedTexts = <Widget>[];
-    for (Widget child in inline.children) {
-      if (mergedTexts.isNotEmpty && mergedTexts.last is RichText && child is RichText) {
+    for (Widget child in children) {
+      if (mergedTexts.isNotEmpty &&
+          mergedTexts.last is RichText &&
+          child is RichText) {
         RichText previous = mergedTexts.removeLast();
-        List<TextSpan> children = previous.text.children != null
-          ? new List.from(previous.text.children)
-          : [previous.text];
+        TextSpan previousTextSpan = previous.text;
+        List<TextSpan> children = previousTextSpan.children != null
+            ? List.from(previousTextSpan.children)
+            : [previousTextSpan];
         children.add(child.text);
-        TextSpan mergedSpan = new TextSpan(children: children);
-        mergedTexts.add(new RichText(text: mergedSpan));
+        TextSpan mergedSpan = TextSpan(children: children);
+        mergedTexts.add(_buildRichText(
+          mergedSpan,
+          textAlign: textAlign,
+        ));
+      } else if (mergedTexts.isNotEmpty &&
+          mergedTexts.last is SelectableText &&
+          child is SelectableText) {
+        SelectableText previous = mergedTexts.removeLast();
+        TextSpan previousTextSpan = previous.textSpan;
+        List<TextSpan> children = previousTextSpan.children != null
+            ? List.from(previousTextSpan.children)
+            : [previousTextSpan];
+        children.add(child.textSpan);
+        TextSpan mergedSpan = TextSpan(children: children);
+        mergedTexts.add(
+          _buildRichText(
+            mergedSpan,
+            textAlign: textAlign,
+          ),
+        );
       } else {
         mergedTexts.add(child);
       }
     }
     return mergedTexts;
+  }
+
+  TextAlign _textAlignForBlockTag(String blockTag) {
+    WrapAlignment wrapAlignment = _wrapAlignmentForBlockTag(blockTag);
+    switch (wrapAlignment) {
+      case WrapAlignment.start:
+        return TextAlign.start;
+      case WrapAlignment.center:
+        return TextAlign.center;
+      case WrapAlignment.end:
+        return TextAlign.end;
+      case WrapAlignment.spaceAround:
+        return TextAlign.justify;
+      case WrapAlignment.spaceBetween:
+        return TextAlign.justify;
+      case WrapAlignment.spaceEvenly:
+        return TextAlign.justify;
+    }
+    return TextAlign.start;
+  }
+
+  WrapAlignment _wrapAlignmentForBlockTag(String blockTag) {
+    if (blockTag == "p") return styleSheet.textAlign;
+    if (blockTag == "h1") return styleSheet.h1Align;
+    if (blockTag == "h2") return styleSheet.h2Align;
+    if (blockTag == "h3") return styleSheet.h3Align;
+    if (blockTag == "h4") return styleSheet.h4Align;
+    if (blockTag == "h5") return styleSheet.h5Align;
+    if (blockTag == "h6") return styleSheet.h6Align;
+    if (blockTag == "ul") return styleSheet.unorderedListAlign;
+    if (blockTag == "ol") return styleSheet.orderedListAlign;
+    if (blockTag == "blockquote") return styleSheet.blockquoteAlign;
+    if (blockTag == "pre") return styleSheet.codeblockAlign;
+    if (blockTag == "hr") print("Markdown did not handle hr for alignment");
+    if (blockTag == "li") print("Markdown did not handle li for alignment");
+    return WrapAlignment.start;
+  }
+
+  Widget _buildRichText(TextSpan text, {TextAlign textAlign}) {
+    // Combine text spans with equivalent properties into a single span.
+    if (text.children != null && text.children.length > 1) {
+      TextSpan firstChild = text.children.first;
+      if (text.children.every((element) => (element is TextSpan &&
+          element.recognizer == firstChild.recognizer &&
+          element.semanticsLabel == firstChild.semanticsLabel &&
+          element.style == firstChild.style))) {
+        text = TextSpan(
+          text: text.toPlainText(),
+          recognizer: firstChild.recognizer,
+          semanticsLabel: firstChild.semanticsLabel,
+          style: firstChild.style,
+        );
+      }
+    }
+
+    if (selectable) {
+      return SelectableText.rich(
+        text,
+        textScaleFactor: styleSheet.textScaleFactor,
+        textAlign: textAlign ?? TextAlign.start,
+      );
+    } else {
+      return RichText(
+        text: text,
+        textScaleFactor: styleSheet.textScaleFactor,
+        textAlign: textAlign ?? TextAlign.start,
+      );
+    }
   }
 }
