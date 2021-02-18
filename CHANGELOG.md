@@ -1,3 +1,35 @@
+## 0.6.0-nullsafety.2
+
+ * Dependencies updated for null safety
+
+## 0.6.0-nullsafety.1
+
+ * Fix null safety on web
+ * Image test mocks fixed for null safety
+
+## 0.6.0-nullsafety.0
+
+ * Initial null safety migration.
+
+## 0.5.2
+
+ * Added `MarkdownListItemCrossAxisAlignment` to allow for intrinsic height
+   measurements of lists.
+
+## 0.5.1
+
+ * Fix user defined builders 
+
+## 0.5.0
+
+ * BREAKING CHANGE: `MarkdownTapLinkCallback` now has three parameters, not one, exposing more
+   information about a tapped link.
+   * Note for upgraders, the old single parameter `href` is now the second parameter to match the specification.
+ * Android example upgraded
+ * Test coverage updated to match GitHub Flavoured Markdown and CommonMark
+ * Handle links with empty descriptions
+ * Handle empty rows in tables
+
 ## 0.4.4
 
  * Fix handling of newline character in blockquote

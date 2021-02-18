@@ -5,22 +5,24 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:markdown/markdown.dart' as md;
-import 'package:meta/meta.dart';
 
 import '_functions_io.dart' if (dart.library.html) '_functions_web.dart';
 import 'builder.dart';
 import 'style_sheet.dart';
 
-/// Signature for callbacks used by [Markdown] when the user taps a link.
+/// Signature for callbacks used by [MarkdownWidget] when the user taps a link.
+/// The callback will return the link text, destination, and title from the
+/// Markdown link tag in the document.
 ///
-/// Used by [Markdown.onTapLink].
-typedef void MarkdownTapLinkCallback(String href);
+/// Used by [MarkdownWidget.onTapLink].
+typedef void MarkdownTapLinkCallback(String text, String? href, String title);
 
 /// Signature for custom image widget.
 ///
 /// Used by [MarkdownWidget.imageBuilder]
-typedef Widget MarkdownImageBuilder(Uri uri, String title, String alt);
+typedef Widget MarkdownImageBuilder(Uri uri, String? title, String? alt);
 
 /// Signature for custom checkbox widget.
 ///
@@ -47,7 +49,7 @@ abstract class MarkdownElementBuilder {
   /// to [preferredStyle].
   ///
   /// If you needn't build a widget, return null.
-  Widget visitText(md.Text text, TextStyle preferredStyle) => null;
+  Widget? visitText(md.Text text, TextStyle? preferredStyle) => null;
 
   /// Called when an Element has been reached, after its children have been
   /// visited.
@@ -56,7 +58,7 @@ abstract class MarkdownElementBuilder {
   /// to [preferredStyle].
   ///
   /// If you needn't build a widget, return null.
-  Widget visitElementAfter(md.Element element, TextStyle preferredStyle) =>
+  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) =>
       null;
 }
 
@@ -67,6 +69,40 @@ abstract class MarkdownElementBuilder {
 /// [platform] - create MarkdownStyleSheet based on the Platform where the
 /// is running on. Material on Android and Cupertino on iOS
 enum MarkdownStyleSheetBaseTheme { material, cupertino, platform }
+
+/// Enumeration of alignment strategies for the cross axis of list items.
+enum MarkdownListItemCrossAxisAlignment {
+  /// Uses [CrossAxisAlignment.baseline] for the row the bullet and the list
+  /// item are placed in.
+  ///
+  /// This alignment will ensure that the bullet always lines up with
+  /// the list text on the baseline.
+  ///
+  /// However, note that this alignment does not support intrinsic height
+  /// measurements because [RenderFlex] does not support it for
+  /// [CrossAxisAlignment.baseline].
+  /// See https://github.com/flutter/flutter_markdown/issues/311 for cases,
+  /// where this might be a problem for you.
+  ///
+  /// See also:
+  /// * [start], which allows for intrinsic height measurements.
+  baseline,
+
+  /// Uses [CrossAxisAlignment.start] for the row the bullet and the list item
+  /// are placed in.
+  ///
+  /// This alignment will ensure that intrinsic height measurements work.
+  ///
+  /// However, note that this alignment might not line up the bullet with the
+  /// list text in the way you would expect in certain scenarios.
+  /// See https://github.com/flutter/flutter_markdown/issues/169 for example
+  /// cases that do not produce expected results.
+  ///
+  /// See also:
+  /// * [baseline], which will position the bullet and list item on the
+  ///   baseline.
+  start,
+}
 
 /// A base class for widgets that parse and display Markdown.
 ///
@@ -82,12 +118,24 @@ enum MarkdownStyleSheetBaseTheme { material, cupertino, platform }
 class Markdown extends StatefulWidget {
 
   factory Markdown.parse({
-    Key key,
-    @required String data,
-    MarkdownStyleSheet styleSheet,
-    SyntaxHighlighter syntaxHighlighter,
-    MarkdownTapLinkCallback onTapLink,
-    String imageDirectory,
+    Key? key,
+    required String data,
+    bool selectable = false,
+    MarkdownStyleSheet? styleSheet,
+    MarkdownStyleSheetBaseTheme? styleSheetTheme,
+    SyntaxHighlighter? syntaxHighlighter,
+    MarkdownTapLinkCallback? onTapLink,
+    VoidCallback? onTapText,
+    String? imageDirectory,
+    List<md.BlockSyntax>? blockSyntaxes,
+    List<md.InlineSyntax>? inlineSyntaxes,
+    md.ExtensionSet? extensionSet,
+    MarkdownImageBuilder? imageBuilder,
+    MarkdownCheckboxBuilder? checkboxBuilder,
+    Map<String, MarkdownElementBuilder> builders = const {},
+    bool fitContent = false,
+    MarkdownListItemCrossAxisAlignment listItemCrossAxisAlignment =
+        MarkdownListItemCrossAxisAlignment.baseline,
     bool scrollable = false,
     EdgeInsets scrollablePadding = const EdgeInsets.all(16.0)
   }) {
@@ -109,8 +157,8 @@ class Markdown extends StatefulWidget {
   ///
   /// The [data] argument must not be null.
   const Markdown({
-    Key key,
-    @required this.nodes,
+    Key? key,
+    required this.nodes,
     this.scrollable = false,
     this.scrollablePadding = const EdgeInsets.all(16.0),
     this.selectable = false,
@@ -118,6 +166,7 @@ class Markdown extends StatefulWidget {
     this.styleSheetTheme = MarkdownStyleSheetBaseTheme.material,
     this.syntaxHighlighter,
     this.onTapLink,
+    this.onTapText,
     this.imageDirectory,
     this.blockSyntaxes,
     this.inlineSyntaxes,
@@ -126,11 +175,9 @@ class Markdown extends StatefulWidget {
     this.checkboxBuilder,
     this.builders = const {},
     this.fitContent = false,
-  })  : assert(nodes != null),
-        assert(scrollable != null),
-        assert(selectable != null),
-        assert(builders != null),
-        super(key: key);
+    this.listItemCrossAxisAlignment =
+        MarkdownListItemCrossAxisAlignment.baseline,
+  }) : super(key: key);
 
   final List<md.Node> nodes;
 
@@ -146,40 +193,43 @@ class Markdown extends StatefulWidget {
   /// The styles to use when displaying the Markdown.
   ///
   /// If null, the styles are inferred from the current [Theme].
-  final MarkdownStyleSheet styleSheet;
+  final MarkdownStyleSheet? styleSheet;
 
   /// Setting to specify base theme for MarkdownStyleSheet
   ///
   /// Default to [MarkdownStyleSheetBaseTheme.material]
-  final MarkdownStyleSheetBaseTheme styleSheetTheme;
+  final MarkdownStyleSheetBaseTheme? styleSheetTheme;
 
   /// The syntax highlighter used to color text in `pre` elements.
   ///
   /// If null, the [MarkdownStyleSheet.code] style is used for `pre` elements.
-  final SyntaxHighlighter syntaxHighlighter;
+  final SyntaxHighlighter? syntaxHighlighter;
 
   /// Called when the user taps a link.
-  final MarkdownTapLinkCallback onTapLink;
+  final MarkdownTapLinkCallback? onTapLink;
+
+  /// Default tap handler used when [selectable] is set to true
+  final VoidCallback? onTapText;
 
   /// The base directory holding images referenced by Img tags with local or network file paths.
-  final String imageDirectory;
+  final String? imageDirectory;
 
   /// Collection of custom block syntax types to be used parsing the Markdown data.
-  final List<md.BlockSyntax> blockSyntaxes;
+  final List<md.BlockSyntax>? blockSyntaxes;
 
   /// Collection of custom inline syntax types to be used parsing the Markdown data.
-  final List<md.InlineSyntax> inlineSyntaxes;
+  final List<md.InlineSyntax>? inlineSyntaxes;
 
   /// Markdown syntax extension set
   ///
   /// Defaults to [md.ExtensionSet.gitHubFlavored]
-  final md.ExtensionSet extensionSet;
+  final md.ExtensionSet? extensionSet;
 
   /// Call when build an image widget.
-  final MarkdownImageBuilder imageBuilder;
+  final MarkdownImageBuilder? imageBuilder;
 
   /// Call when build a checkbox widget.
-  final MarkdownCheckboxBuilder checkboxBuilder;
+  final MarkdownCheckboxBuilder? checkboxBuilder;
 
   /// Render certain tags, usually used with [extensionSet]
   ///
@@ -197,12 +247,19 @@ class Markdown extends StatefulWidget {
   /// Whether to allow the widget to fit the child content.
   final bool fitContent;
 
+  /// Controls the cross axis alignment for the bullet and list item content
+  /// in lists.
+  ///
+  /// Defaults to [MarkdownListItemCrossAxisAlignment.baseline], which
+  /// does not allow for intrinsic height measurements.
+  final MarkdownListItemCrossAxisAlignment listItemCrossAxisAlignment;
+
   @override
-  _MarkdownState createState() => new _MarkdownState();
+  _MarkdownState createState() => _MarkdownState();
 }
 
 class _MarkdownState extends State<Markdown> implements MarkdownBuilderDelegate {
-  List<Widget> _children;
+  late List<Widget> _children;
   final List<GestureRecognizer> _recognizers = <GestureRecognizer>[];
 
   @override
@@ -232,7 +289,7 @@ class _MarkdownState extends State<Markdown> implements MarkdownBuilderDelegate 
         kFallbackStyle(context, widget.styleSheetTheme);
     final MarkdownStyleSheet styleSheet =
         fallbackStyleSheet.merge(widget.styleSheet);
-    final MarkdownBuilder builder = new MarkdownBuilder(
+    final MarkdownBuilder builder = MarkdownBuilder(
       delegate: this,
       selectable: widget.selectable,
       styleSheet: styleSheet,
@@ -241,6 +298,8 @@ class _MarkdownState extends State<Markdown> implements MarkdownBuilderDelegate 
       checkboxBuilder: widget.checkboxBuilder,
       builders: widget.builders,
       fitContent: widget.fitContent,
+      listItemCrossAxisAlignment: widget.listItemCrossAxisAlignment,
+      onTapText: widget.onTapText,
     );
     _children = builder.build(widget.nodes);
   }
@@ -254,10 +313,12 @@ class _MarkdownState extends State<Markdown> implements MarkdownBuilderDelegate 
   }
 
   @override
-  GestureRecognizer createLink(String href) {
+  GestureRecognizer createLink(String text, String? href, String title) {
     final TapGestureRecognizer recognizer = TapGestureRecognizer()
       ..onTap = () {
-        if (widget.onTapLink != null) widget.onTapLink(href);
+        if (widget.onTapLink != null) {
+          widget.onTapLink!(text, href, title);
+        }
       };
     _recognizers.add(recognizer);
     return recognizer;
@@ -267,14 +328,13 @@ class _MarkdownState extends State<Markdown> implements MarkdownBuilderDelegate 
   TextSpan formatText(MarkdownStyleSheet styleSheet, String code) {
     code = code.replaceAll(RegExp(r'\n$'), '');
     if (widget.syntaxHighlighter != null) {
-      return widget.syntaxHighlighter.format(code);
+      return widget.syntaxHighlighter!.format(code);
     }
     return TextSpan(style: styleSheet.code, text: code);
   }
 
   @override
   Widget build(BuildContext context) {
-
     if (widget.scrollable) {
       return ListView(
         padding: widget.scrollablePadding,
@@ -304,7 +364,7 @@ class TaskListSyntax extends md.InlineSyntax {
     md.Element el = md.Element.withTag('input');
     el.attributes['type'] = 'checkbox';
     el.attributes['disabled'] = 'true';
-    el.attributes['checked'] = '${match[1].trim().isNotEmpty}';
+    el.attributes['checked'] = '${match[1]!.trim().isNotEmpty}';
     parser.addNode(el);
     return true;
   }
